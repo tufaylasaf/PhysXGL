@@ -1,0 +1,49 @@
+# Ignore CMake-generated build directories and files
+/build/
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/Makefile
+/compile_commands.json
+/res/models/
+/res/textures/
+/res/skybox/
+# Ignore VSCode specific settings
+/.vscode/
+/.vscode/*
+
+# Ignore executables and libraries
+*.exe
+*.dll
+*.so
+*.dylib
+*.app
+*.out
+
+# Ignore backup and temporary files
+*~
+*.swp
+*.bak
+*.tmp
+*.log
+
+# Ignore object files and static libraries
+*.o
+*.obj
+*.lib
+*.a
+
+# Ignore debugger related files
+*.pdb
+*.idb
+*.tlog
+*.dir
+
+# Ignore CTest related files
+/Testing/
+/CTestTestfile.cmake
+/CTestCostData.txt
+
+# Ignore user-specific CMake settings
+CMakeLists.txt.user
+CMakeLists.txt.user.*
