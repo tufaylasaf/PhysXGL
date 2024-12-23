@@ -6,9 +6,8 @@
 #include <chrono>
 #include <random>
 
-#include "Model.h"
 #include "light.h"
-#include "particle.h"
+#include "physx.h"
 
 const unsigned int width = 1600;
 const unsigned int height = 900;
@@ -17,18 +16,14 @@ std::vector<Model *> Model::models;
 std::vector<Light *> Light::lights;
 int Light::pointLightCount = 0;
 
+std::vector<Particle *> Particle::particles;
+
 float randomFloat(float min, float max)
 {
     static std::random_device rd;
     static std::mt19937 gen(rd());
     std::uniform_real_distribution<float> dis(min, max);
     return dis(gen);
-}
-
-// Generate a random vec3 with components in the range [min, max]
-glm::vec3 randomVec3(float min, float max)
-{
-    return glm::vec3(randomFloat(min, max), randomFloat(min, max), randomFloat(min, max));
 }
 
 std::vector<glm::vec3> generateSpherePoints(int numPoints, float radius)
@@ -189,25 +184,15 @@ int main()
 
     auto lastTime = std::chrono::high_resolution_clock::now();
 
-    // Particle and Model storage
-    std::vector<Particle> particles;
-    std::vector<Model *> particleModels;
-
-    Particle newParticle;
-    newParticle.color = glm::vec3(1.0f, 0.5f, 0.2f);
-    newParticle.pos = randomVec3(-2.0f, 2.0f);
-    newParticle.vel = randomVec3(-1.0f, 1.0f);
-    newParticle.acc = glm::vec3(0.0f);
-
-    particles.push_back(newParticle);
-
-    Model *newModel = new Model("res/models/Shapes/icosphere.gltf", "s", true);
-    particleModels.push_back(newModel);
+    Physx physx;
 
     int numPoints = 12;
-    float sphereRadius = 3.1f;
+    float constraintRadius = 3.1f;
+    float particleRadius = 0.1f;
 
-    std::vector<glm::vec3> spherePoints = generateCubeSpherePoints(numPoints, sphereRadius);
+    Particle p(particleRadius, constraintRadius);
+
+    std::vector<glm::vec3> spherePoints = generateCubeSpherePoints(numPoints, constraintRadius);
 
     // Create VBO and VAO for drawing points
     GLuint VBO, VAO;
@@ -249,17 +234,9 @@ int main()
         camera.Inputs(window);
         camera.updateMatrix(45.0f, 0.1f, 100.0f);
 
-        // Update particles and corresponding models
-        for (size_t i = 0; i < particles.size(); ++i)
-        {
-            particles[i].update(dt, 9.8f);
-            particles[i].constraint(3.0f);
+        physx.update(particleRadius, dt, 9.81, constraintRadius);
 
-            // If you want the particle models to follow particles, continue updating them
-            particleModels[i]->translation = glm::vec3(particles[i].pos.y, particles[i].pos.x, particles[i].pos.z);
-        }
-
-        // shader.Activate();
+        shader.Activate();
 
         glm::mat4 model = glm::mat4(1.0f);                          // Identity matrix
         model = glm::translate(model, glm::vec3(0.0f, 0.0f, 0.0f)); // Translate to center
@@ -299,27 +276,22 @@ int main()
         ImGui::DragFloat3("Sun Direction", &sunDirection[0], 0.1f);
         ImGui::ColorEdit3("Particle Color", &color[0], 0.1f);
         ImGui::ColorEdit3("Ambient Lighting", &ambient[0], 0.1f);
+        ImGui::DragFloat("Particle Radius", &particleRadius, 0.1f);
 
         if (ImGui::Button("Spawn Particle"))
         {
-            Particle newParticle;
-            newParticle.color = glm::vec3(1.0f, 0.5f, 0.2f);
-            newParticle.pos = randomVec3(-2.0f, 2.0f);
-            newParticle.vel = randomVec3(-1.0f, 1.0f);
-            newParticle.acc = glm::vec3(0.0f);
-
-            particles.push_back(newParticle);
-
-            Model *newModel = new Model("res/models/Shapes/icosphere.gltf", "s", true);
-            particleModels.push_back(newModel);
+            new Particle(particleRadius, constraintRadius);
         }
-
-        ImGui::Spacing();
-        ImGui::Separator();
-
         ImGui::End();
 
         ImGui::Begin("Objects", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize);
+        // int count = 0;
+        // for (Model *model : Model::models)
+        // {
+        //     model->name = "p(" + std::to_string(count) + ")";
+        //     model->UI();
+        //     count++;
+        // }
         ImGui::End();
 
         ImGui::Render();

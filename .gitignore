@@ -14,7 +14,7 @@
 
 # Ignore executables and libraries
 *.exe
-*.dll
+# *.dll
 *.so
 *.dylib
 *.app

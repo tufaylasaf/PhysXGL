@@ -2,11 +2,16 @@
 
 void Particle::update(float dt, float g)
 {
+
     acc.y -= g;
 
-    vel += acc * dt;
+    glm::vec3 friction = -0.2f * vel;
+    acc += friction;
 
+    vel += acc * dt;
     pos += vel * dt;
+
+    model.translation = glm::vec3(pos.y, pos.x, pos.z);
 
     acc = glm::vec3(0.0f);
 }
