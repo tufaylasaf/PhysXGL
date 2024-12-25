@@ -271,6 +271,10 @@ int main()
         ImGui::Text("Frame time: %.3f ms", 1000.0f / io.Framerate);
 
         ImGui::Spacing();
+
+        ImGui::TextColored(ImVec4(0.0f, 128.0f, 0.0f, 255.0f), "Particle Count: %i", Particle::particles.size());
+
+        ImGui::Spacing();
         ImGui::Separator();
 
         ImGui::DragFloat3("Sun Direction", &sunDirection[0], 0.1f);
@@ -278,9 +282,19 @@ int main()
         ImGui::ColorEdit3("Ambient Lighting", &ambient[0], 0.1f);
         ImGui::DragFloat("Particle Radius", &particleRadius, 0.1f);
 
-        if (ImGui::Button("Spawn Particle"))
+        static int spawnCount = 1; // Default spawn count
+
+        ImGui::InputInt("Particle Count", &spawnCount); // Input box to adjust count
+        if (spawnCount < 1)
+            spawnCount = 1; // Ensure count is at least 1
+
+        // Button to spawn particles
+        if (ImGui::Button("Spawn Particle(s)"))
         {
-            new Particle(particleRadius, constraintRadius);
+            for (int i = 0; i < spawnCount; i++)
+            {
+                new Particle(particleRadius, constraintRadius); // Spawn particles
+            }
         }
         ImGui::End();
 

@@ -37,7 +37,11 @@ public:
 
     void constraint(float r);
 
+    void applyForce(glm::vec3 f);
+
 private:
+    glm::vec3 newAcc;
+
     float randomFloat(float min, float max)
     {
         static std::random_device rd;
