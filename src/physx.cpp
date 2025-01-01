@@ -15,14 +15,10 @@ void Physx::update(float pr, float dt, float g, float r)
                 continue;
 
             float dist = glm::distance(p1->pos, p2->pos);
-
             if (dist < pr * 2)
             {
-
                 float overlap = pr * 2 - dist;
-
                 glm::vec3 collisionNormal = glm::normalize(p2->pos - p1->pos);
-
                 glm::vec3 correction = collisionNormal * (overlap / 2.0f);
                 p1->pos -= correction;
                 p2->pos += correction;
