@@ -3,17 +3,64 @@
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
 struct Particle {
-    vec3 position;
-    vec3 velocity;
+    vec3 pos;
+    vec3 vel;
+    vec3 acc;
+
+    float radius;
+
+    vec3 newAcc;
 };
 
 layout(std430, binding = 0) buffer Particles {
     Particle particles[];
 };
 
-uniform float deltaTime;
+uniform float dt;
+uniform float g;
+uniform float cr;
+
+void applyForce(inout Particle p, vec3 f){
+    p.newAcc += f;
+}
+
+void constraint(inout Particle p, float r){
+    float d = length(p.pos);
+
+    if(d > r){
+        vec3 n = normalize(p.pos);
+        
+        p.pos = n * r;
+        p.vel -= dot(p.vel, n) * n;
+    }
+}
+
+void updateParticle(inout Particle p, float dt, float g){
+    p.newAcc = vec3(0);
+
+    applyForce(p, vec3(0, -g, 0));
+
+    if(length(p.vel) > 0.001){
+        vec3 dir = normalize(p.vel);
+        vec3 friction = -dir * 0.2 * length(p.vel);
+        applyForce(p, friction);
+    }
+
+    vec3 newPos = p.pos + p.vel * dt + p.acc * (dt * dt * 0.5);
+
+    vec3 newVel = p.vel + (p.acc + p.newAcc) * (dt * 0.5);
+
+    p.pos = newPos;
+
+    if(length(newVel) < 0.001) p.vel = vec3(0);
+    else p.vel = newVel;
+
+    p.acc = p.newAcc;
+}
 
 void main() {
     uint id = gl_GlobalInvocationID.x;
-    particles[id].position += particles[id].velocity * deltaTime;
+
+    updateParticle(particles[id], dt, g);
+    constraint(particles[id], cr);
 }

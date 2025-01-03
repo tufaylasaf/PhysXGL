@@ -71,6 +71,19 @@ std::vector<glm::vec3> generateCubeSpherePoints(int pointsPerRow, float radius)
     return vertices;
 }
 
+float randomFloat(float min, float max)
+{
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    std::uniform_real_distribution<float> dis(min, max);
+    return dis(gen);
+}
+
+glm::vec3 randomVec3(float min, float max)
+{
+    return glm::vec3(randomFloat(min, max), randomFloat(min, max), randomFloat(min, max));
+}
+
 // settings
 const unsigned int width = 1600;
 const unsigned int height = 900;
@@ -83,8 +96,13 @@ std::vector<Particle *> Particle::particles;
 
 struct Obj
 {
-    alignas(16) glm::vec3 position;
-    alignas(16) glm::vec3 velocity;
+    alignas(16) glm::vec3 pos;
+    alignas(16) glm::vec3 vel;
+    alignas(16) glm::vec3 acc;
+
+    alignas(4) float radius;
+
+    alignas(16) glm::vec3 newAcc;
 };
 
 int main(int argc, char *argv[])
@@ -124,10 +142,15 @@ int main(int argc, char *argv[])
     // Setup compute shader
     ComputeShader computeShader("res/shaders/particle.comp");
 
+    auto lastTime = std::chrono::high_resolution_clock::now();
+    int numPoints = 12;
+    float constraintRadius = 3.1f;
+    float particleRadius = 0.1f;
+
     // Setup particle data in an SSBO
     std::vector<Obj> objs = {
-        {{0.0f, 0.0f, 0.0f}, {0.25f, 0.25f, 0.0f}},  // Particle 1
-        {{0.0f, 0.0f, 0.0f}, {-0.25f, -0.25f, 0.0f}} // Particle 2
+        {{randomVec3(-constraintRadius, constraintRadius)}, {randomVec3(-1.0f, 1.0f)}, {0.0f, 0.0f, 0.0f}, particleRadius, {0.0f, 0.0f, 0.0f}}, // Particle 1
+        {{randomVec3(-constraintRadius, constraintRadius)}, {randomVec3(-1.0f, 1.0f)}, {0.0f, 0.0f, 0.0f}, particleRadius, {0.0f, 0.0f, 0.0f}}  // Particle 2
     };
 
     GLuint ssbo;
@@ -146,12 +169,8 @@ int main(int argc, char *argv[])
     glm::vec3 color(1.0f, 1.0f, 1.0f);
     glm::vec3 ambient(0.15f, 0.15f, 0.15f);
 
-    auto lastTime = std::chrono::high_resolution_clock::now();
-    int numPoints = 12;
-    float constraintRadius = 3.1f;
-    float particleRadius = 0.1f;
-
-    std::vector<glm::vec3> spherePoints = generateCubeSpherePoints(numPoints, constraintRadius);
+    std::vector<glm::vec3>
+        spherePoints = generateCubeSpherePoints(numPoints, constraintRadius);
 
     // Create VBO and VAO for drawing points
     GLuint VBO, VAO;
@@ -219,7 +238,10 @@ int main(int argc, char *argv[])
 
         // Compute shader
         computeShader.use();
-        computeShader.setFloat("deltaTime", dt);
+        computeShader.setFloat("dt", dt);
+        computeShader.setFloat("g", 9.81f);
+        computeShader.setFloat("cr", constraintRadius + 0.25f);
+
         glDispatchCompute(objs.size(), 1, 1);
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
@@ -244,9 +266,10 @@ int main(int argc, char *argv[])
 
         shader.Activate();
         glm::mat4 model = glm::mat4(1.0);
-        model = glm::scale(model, glm::vec3(particleRadius));
+        // model = glm::scale(model, glm::vec3(particleRadius));
         glUniformMatrix4fv(glGetUniformLocation(shader.ID, "model"), 1, GL_FALSE, glm::value_ptr(model));
         glUniformMatrix4fv(glGetUniformLocation(shader.ID, "camMatrix"), 1, GL_FALSE, glm::value_ptr(camera.cameraMatrix));
+        glUniform1f(glGetUniformLocation(shader.ID, "scale"), particleRadius);
 
         glEnable(GL_DEPTH_TEST);
 
@@ -270,7 +293,7 @@ int main(int argc, char *argv[])
 
         ImGui::Spacing();
 
-        ImGui::TextColored(ImVec4(0.0f, 128.0f, 0.0f, 255.0f), "Particle Count: %i", Particle::particles.size());
+        ImGui::TextColored(ImVec4(0.0f, 128.0f, 0.0f, 255.0f), "Particle Count: %i", objs.size());
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -291,19 +314,23 @@ int main(int argc, char *argv[])
         {
             for (int i = 0; i < spawnCount; i++)
             {
-                // new Particle(particleRadius, constraintRadius); // Spawn particles
+                // Generate a random position and velocity for the new particle
+                glm::vec3 randomPos = randomVec3(-constraintRadius, constraintRadius);
+                glm::vec3 randomVel = randomVec3(-1.0f, 1.0f);
+
+                // Create the new particle object
+                Obj newParticle = {{randomPos}, {randomVel}, {0.0f, 0.0f, 0.0f}, particleRadius, {0.0f, 0.0f, 0.0f}};
+
+                // Add the new particle to the 'objs' vector
+                objs.push_back(newParticle);
+
+                // Resize the SSBO to accommodate the new particle
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
+                glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(Obj) * objs.size(), objs.data(), GL_DYNAMIC_DRAW);
+                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo);
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
             }
         }
-        ImGui::End();
-
-        ImGui::Begin("Objects", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize);
-        // int count = 0;
-        // for (Model *model : Model::models)
-        // {
-        //     model->name = "p(" + std::to_string(count) + ")";
-        //     model->UI();
-        //     count++;
-        // }
         ImGui::End();
 
         ImGui::Render();
