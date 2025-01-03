@@ -20,6 +20,9 @@ public:
 
     static std::vector<Model *> models;
 
+    // All the meshes and transformations
+    std::vector<Mesh> meshes;
+
     // Loads in a model from a file and stores tha information in 'data', 'JSON', and 'file'
     Model();
     Model(const char *file, std::string n, bool addToList);
@@ -40,8 +43,6 @@ private:
     std::vector<unsigned char> data;
     json JSON;
 
-    // All the meshes and transformations
-    std::vector<Mesh> meshes;
     std::vector<glm::vec3> translationsMeshes;
     std::vector<glm::quat> rotationsMeshes;
     std::vector<glm::vec3> scalesMeshes;
