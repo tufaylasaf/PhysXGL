@@ -123,6 +123,70 @@ std::vector<glm::vec3> generateCubeSpherePoints(int pointsPerRow, float radius)
     return vertices;
 }
 
+const float PI = 3.14159265358979323846f;
+const float PHI = (1.0f + std::sqrt(5.0f)) / 2.0f; // Golden ratio
+
+// Function to create an icosphere
+void generateIcosphere(int subdivisions, std::vector<Vertex> &vertices, std::vector<GLuint> &indices)
+{
+    // 12 vertices of the icosahedron
+    std::vector<glm::vec3> icosahedronVertices = {
+        glm::vec3(-1.0f, PHI, 0.0f),
+        glm::vec3(1.0f, PHI, 0.0f),
+        glm::vec3(-1.0f, -PHI, 0.0f),
+        glm::vec3(1.0f, -PHI, 0.0f),
+        glm::vec3(0.0f, -1.0f, PHI),
+        glm::vec3(0.0f, 1.0f, PHI),
+        glm::vec3(0.0f, -1.0f, -PHI),
+        glm::vec3(0.0f, 1.0f, -PHI),
+        glm::vec3(PHI, 0.0f, -1.0f),
+        glm::vec3(PHI, 0.0f, 1.0f),
+        glm::vec3(-PHI, 0.0f, -1.0f),
+        glm::vec3(-PHI, 0.0f, 1.0f)};
+
+    // Indices for the icosahedron faces
+    indices = {
+        0, 11, 5, 0, 5, 1, 0, 1, 7, 0, 7, 10,
+        0, 10, 11, 1, 5, 9, 5, 11, 4, 11, 10, 2,
+        10, 7, 6, 7, 1, 8, 3, 8, 9, 4, 9, 8,
+        4, 11, 5, 5, 10, 2, 9, 7, 1, 8, 9, 4};
+
+    // Create vertices for the icosphere
+    for (auto &vertex : icosahedronVertices)
+    {
+        glm::vec3 normalizedVertex = glm::normalize(vertex);
+        vertices.push_back({normalizedVertex, normalizedVertex}); // Position and normal are the same for unit sphere
+    }
+}
+
+// Function to setup OpenGL buffers and bind the VAO, VBO, EBO
+void setupIcosphereBuffers(std::vector<Vertex> &vertices, std::vector<GLuint> &indices, GLuint &VAO, GLuint &VBO, GLuint &EBO)
+{
+    glGenVertexArrays(1, &VAO);
+    glGenBuffers(1, &VBO);
+    glGenBuffers(1, &EBO);
+
+    glBindVertexArray(VAO);
+
+    // Set up vertex buffer (VBO)
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vertex), vertices.data(), GL_STATIC_DRAW);
+
+    // Position attribute
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void *)0);
+    glEnableVertexAttribArray(0);
+
+    // Normal attribute
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void *)offsetof(Vertex, normal));
+    glEnableVertexAttribArray(1);
+
+    // Set up element buffer (EBO)
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(GLuint), indices.data(), GL_STATIC_DRAW);
+
+    glBindVertexArray(0);
+}
+
 // settings
 const unsigned int width = 1600;
 const unsigned int height = 900;
@@ -249,6 +313,7 @@ int main(int argc, char *argv[])
 
     // Setup shaders
     Shader shader("res/shaders/default.vert", "res/shaders/default.frag");
+    Shader icoboundsShader("res/shaders/icobounds.vert", "res/shaders/default.frag");
     Camera camera(width, height, glm::vec3(0.0f, 0.0f, 10.0f));
 
     glm::vec3 sunDirection(1.0f, 1.0f, 1.0f);
@@ -259,6 +324,34 @@ int main(int argc, char *argv[])
     int numPoints = 12;
     float constraintRadius = 3.1f;
     float particleRadius = 0.1f;
+
+    std::vector<glm::vec3> spherePoints = generateCubeSpherePoints(numPoints, constraintRadius);
+
+    // Create VBO and VAO for drawing points
+    GLuint VBO, VAO;
+    glGenBuffers(1, &VBO);
+    glGenVertexArrays(1, &VAO);
+
+    glBindVertexArray(VAO);
+
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, spherePoints.size() * sizeof(glm::vec3), &spherePoints[0], GL_STATIC_DRAW);
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void *)0);
+    glEnableVertexAttribArray(0);
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    glBindVertexArray(0);
+
+    std::vector<Vertex> vertices;
+    std::vector<GLuint> indices;
+
+    // Generate the icosphere data
+    generateIcosphere(3, vertices, indices); // 3 subdivisions
+
+    GLuint pVAO, pVBO, pEBO;
+    setupIcosphereBuffers(vertices, indices, pVAO, pVBO, pEBO);
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -285,17 +378,34 @@ int main(int argc, char *argv[])
         camera.Inputs(window);
         camera.updateMatrix(45.0f, 0.1f, 100.0f);
 
+        // Render the cube
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        icoboundsShader.Activate();
+        glm::mat4 m = glm::mat4(1.0f);                      // Identity matrix
+        m = glm::translate(m, glm::vec3(0.0f, 0.0f, 0.0f)); // Translate to center
+        glUniformMatrix4fv(glGetUniformLocation(icoboundsShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(m));
+        glUniformMatrix4fv(glGetUniformLocation(icoboundsShader.ID, "camMatrix"), 1, GL_FALSE, glm::value_ptr(camera.cameraMatrix));
+
+        glPolygonMode(GL_FRONT_AND_BACK, GL_POINT); // Draw points
+        glBindVertexArray(VAO);
+        glDrawArrays(GL_POINTS, 0, spherePoints.size()); // Draw points around the center
+        glBindVertexArray(0);
+
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
         shader.Activate();
         glm::mat4 model = glm::mat4(1.0);
         model = glm::scale(model, glm::vec3(particleRadius));
         glUniformMatrix4fv(glGetUniformLocation(shader.ID, "model"), 1, GL_FALSE, glm::value_ptr(model));
         glUniformMatrix4fv(glGetUniformLocation(shader.ID, "camMatrix"), 1, GL_FALSE, glm::value_ptr(camera.cameraMatrix));
 
-        // Render the cube
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        // glBindVertexArray(vao);
+        // glDrawArraysInstanced(GL_TRIANGLES, 0, 36, objs.size());
+        // glBindVertexArray(0);
 
-        glBindVertexArray(vao);
-        glDrawArraysInstanced(GL_TRIANGLES, 0, 36, objs.size());
+        glBindVertexArray(pVAO);
+        glDrawArraysInstanced(GL_TRIANGLES, 0, vertices.size(), objs.size());
         glBindVertexArray(0);
 
         glUniform3f(glGetUniformLocation(shader.ID, "sunDirection"), sunDirection.x, sunDirection.y, sunDirection.z);
