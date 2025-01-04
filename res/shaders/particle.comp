@@ -1,6 +1,6 @@
 #version 430 core
 
-layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
 
 struct Particle {
     vec3 pos;
@@ -19,6 +19,8 @@ layout(std430, binding = 0) buffer Particles {
 uniform float dt;
 uniform float g;
 uniform float cr;
+uniform int particleCount;
+uniform int subSteps;
 
 void applyForce(inout Particle p, vec3 f){
     p.newAcc += f;
@@ -58,9 +60,49 @@ void updateParticle(inout Particle p, float dt, float g){
     p.acc = p.newAcc;
 }
 
-void main() {
-    uint id = gl_GlobalInvocationID.x;
+void resolveCollisions(inout Particle p1, inout Particle p2){
+    float d = distance(p1.pos, p2.pos);
 
-    updateParticle(particles[id], dt, g);
-    constraint(particles[id], cr);
+    if(d < p1.radius + p2.radius){
+
+        float overlap = p1.radius + p2.radius - d;
+
+
+        vec3 collisionNormal = normalize(p2.pos - p1.pos);
+        vec3 correction = collisionNormal * (overlap / 2.0);
+
+
+        p1.pos -= correction;
+        p2.pos += correction;
+
+
+        vec3 relVel = p1.vel - p2.vel;
+        float impulseMag = dot(relVel, collisionNormal);
+
+        float restitution = 0.8;
+        vec3 impulse = collisionNormal * impulseMag * restitution;
+
+
+        p1.vel -= impulse * 0.5;
+        p2.vel += impulse * 0.5;
+    }
+}
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+
+    float subdt = dt / subSteps;
+
+    if(i >= particleCount) return;
+
+    for(int steps = 0; steps < subSteps; steps++){
+        for(int j = 0; j < particleCount; j++){
+            if(j != i){
+                resolveCollisions(particles[i], particles[j]);
+            }
+        }
+
+        updateParticle(particles[i], subdt, g);
+        constraint(particles[i], cr);
+    }
 }

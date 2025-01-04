@@ -146,6 +146,7 @@ int main(int argc, char *argv[])
     int numPoints = 12;
     float constraintRadius = 3.1f;
     float particleRadius = 0.1f;
+    int subSteps = 8;
 
     // Setup particle data in an SSBO
     std::vector<Obj> objs = {
@@ -236,13 +237,20 @@ int main(int argc, char *argv[])
         float dt = elapsed.count();
         lastTime = currentTime;
 
+        GLuint workgroupSize = 128; // This can be adjusted based on the GPU's capabilities
+
+        // Calculate number of workgroups needed
+        GLuint numWorkgroups = (objs.size() + workgroupSize - 1) / workgroupSize; // Ceil(particleCount / workgroupSize)
+
         // Compute shader
         computeShader.use();
         computeShader.setFloat("dt", dt);
         computeShader.setFloat("g", 9.81f);
         computeShader.setFloat("cr", constraintRadius + 0.25f);
+        computeShader.setInt("particleCount", objs.size());
+        computeShader.setInt("subSteps", subSteps);
 
-        glDispatchCompute(objs.size(), 1, 1);
+        glDispatchCompute(numWorkgroups, 1, 1);
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
         camera.Inputs(window);
@@ -303,8 +311,8 @@ int main(int argc, char *argv[])
         ImGui::ColorEdit3("Ambient Lighting", &ambient[0], 0.1f);
         ImGui::DragFloat("Particle Radius", &particleRadius, 0.1f);
 
-        static int spawnCount = 1; // Default spawn count
-
+        ImGui::DragInt("Sub Steps", &subSteps);
+        static int spawnCount = 1;                      // Default spawn count
         ImGui::InputInt("Particle Count", &spawnCount); // Input box to adjust count
         if (spawnCount < 1)
             spawnCount = 1; // Ensure count is at least 1
