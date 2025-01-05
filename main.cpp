@@ -11,6 +11,7 @@
 #include "physx.h"
 #include "computeShader.h"
 #include "shaderClass.h"
+#include <GL/gl.h>
 
 void framebuffer_size_callback(GLFWwindow *window, int width, int height);
 
@@ -97,12 +98,10 @@ std::vector<Particle *> Particle::particles;
 struct Obj
 {
     alignas(16) glm::vec3 pos;
-    alignas(16) glm::vec3 vel;
+    alignas(16) glm::vec3 prevPos;
     alignas(16) glm::vec3 acc;
 
     alignas(4) float radius;
-
-    alignas(16) glm::vec3 newAcc;
 };
 
 int main(int argc, char *argv[])
@@ -114,7 +113,7 @@ int main(int argc, char *argv[])
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
     // glfw window creation
-    GLFWwindow *window = glfwCreateWindow(width, height, "Particle Cube", NULL, NULL);
+    GLFWwindow *window = glfwCreateWindow(width, height, "tufphysXGL", NULL, NULL);
     if (window == NULL)
     {
         std::cout << "Failed to create GLFW window" << std::endl;
@@ -140,19 +139,26 @@ int main(int argc, char *argv[])
     }
 
     // Setup compute shader
-    ComputeShader computeShader("res/shaders/particle.comp");
+    ComputeShader computeShader("res/shaders/lorenz.comp");
 
     auto lastTime = std::chrono::high_resolution_clock::now();
     int numPoints = 12;
     float constraintRadius = 3.1f;
     float particleRadius = 0.1f;
     int subSteps = 8;
+    float maxSpeed = 2.0f;
 
     // Setup particle data in an SSBO
     std::vector<Obj> objs = {
-        {{randomVec3(-constraintRadius, constraintRadius)}, {randomVec3(-1.0f, 1.0f)}, {0.0f, 0.0f, 0.0f}, particleRadius, {0.0f, 0.0f, 0.0f}}, // Particle 1
-        {{randomVec3(-constraintRadius, constraintRadius)}, {randomVec3(-1.0f, 1.0f)}, {0.0f, 0.0f, 0.0f}, particleRadius, {0.0f, 0.0f, 0.0f}}  // Particle 2
+        {{glm::vec3(0.0f)}, {glm::vec3(0.0f)}, {0.0f, 0.0f, 0.0f}, particleRadius} // Particle 1
     };
+
+    // Add more particles if needed
+    for (int i = 1; i < 20000; ++i)
+    {
+        glm::vec3 randomOffset = randomVec3(-0.01f, 0.01f); // Small random perturbation
+        objs.push_back({{randomOffset}, {glm::vec3(0.0f)}, {0.0f, 0.0f, 0.0f}, particleRadius});
+    }
 
     GLuint ssbo;
     glGenBuffers(1, &ssbo);
@@ -168,7 +174,7 @@ int main(int argc, char *argv[])
 
     glm::vec3 sunDirection(1.0f, 1.0f, 1.0f);
     glm::vec3 color(1.0f, 1.0f, 1.0f);
-    glm::vec3 ambient(0.15f, 0.15f, 0.15f);
+    glm::vec3 ambient(0.02f, 0.02f, 0.02f);
 
     std::vector<glm::vec3>
         spherePoints = generateCubeSpherePoints(numPoints, constraintRadius);
@@ -249,6 +255,12 @@ int main(int argc, char *argv[])
         computeShader.setFloat("cr", constraintRadius + 0.25f);
         computeShader.setInt("particleCount", objs.size());
         computeShader.setInt("subSteps", subSteps);
+        bool spacePressed = false;
+        if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)
+            spacePressed = true;
+
+        computeShader.setBool("pullToCenter", spacePressed);
+        computeShader.setFloat("maxSpeed", maxSpeed);
 
         glDispatchCompute(numWorkgroups, 1, 1);
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
@@ -259,18 +271,18 @@ int main(int argc, char *argv[])
         // Render the cube
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        icoboundsShader.Activate();
-        glm::mat4 m = glm::mat4(1.0f);                      // Identity matrix
-        m = glm::translate(m, glm::vec3(0.0f, 0.0f, 0.0f)); // Translate to center
-        glUniformMatrix4fv(glGetUniformLocation(icoboundsShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(m));
-        glUniformMatrix4fv(glGetUniformLocation(icoboundsShader.ID, "camMatrix"), 1, GL_FALSE, glm::value_ptr(camera.cameraMatrix));
+        // icoboundsShader.Activate();
+        // glm::mat4 m = glm::mat4(1.0f);                      // Identity matrix
+        // m = glm::translate(m, glm::vec3(0.0f, 0.0f, 0.0f)); // Translate to center
+        // glUniformMatrix4fv(glGetUniformLocation(icoboundsShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(m));
+        // glUniformMatrix4fv(glGetUniformLocation(icoboundsShader.ID, "camMatrix"), 1, GL_FALSE, glm::value_ptr(camera.cameraMatrix));
 
-        glPolygonMode(GL_FRONT_AND_BACK, GL_POINT); // Draw points
-        glBindVertexArray(VAO);
-        glDrawArrays(GL_POINTS, 0, spherePoints.size()); // Draw points around the center
-        glBindVertexArray(0);
+        // glPolygonMode(GL_FRONT_AND_BACK, GL_POINT); // Draw points
+        // glBindVertexArray(VAO);
+        // glDrawArrays(GL_POINTS, 0, spherePoints.size()); // Draw points around the center
+        // glBindVertexArray(0);
 
-        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        // glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
         shader.Activate();
         glm::mat4 model = glm::mat4(1.0);
@@ -278,6 +290,7 @@ int main(int argc, char *argv[])
         glUniformMatrix4fv(glGetUniformLocation(shader.ID, "model"), 1, GL_FALSE, glm::value_ptr(model));
         glUniformMatrix4fv(glGetUniformLocation(shader.ID, "camMatrix"), 1, GL_FALSE, glm::value_ptr(camera.cameraMatrix));
         glUniform1f(glGetUniformLocation(shader.ID, "scale"), particleRadius);
+        glUniform1f(glGetUniformLocation(shader.ID, "maxSpeed"), maxSpeed);
 
         glEnable(GL_DEPTH_TEST);
 
@@ -298,7 +311,7 @@ int main(int argc, char *argv[])
         ImGui::TextColored(ImVec4(128.0f, 0.0f, 128.0f, 255.0f), "Stats & Settings");
         ImGui::Text("FPS: %.1f", io.Framerate);
         ImGui::Text("Frame time: %.3f ms", 1000.0f / io.Framerate);
-
+        ImGui::DragFloat3("Camera Pos", &camera.Position[0], 0.1f);
         ImGui::Spacing();
 
         ImGui::TextColored(ImVec4(0.0f, 128.0f, 0.0f, 255.0f), "Particle Count: %i", objs.size());
@@ -310,6 +323,7 @@ int main(int argc, char *argv[])
         ImGui::ColorEdit3("Particle Color", &color[0], 0.1f);
         ImGui::ColorEdit3("Ambient Lighting", &ambient[0], 0.1f);
         ImGui::DragFloat("Particle Radius", &particleRadius, 0.1f);
+        ImGui::DragFloat("Max Speed", &maxSpeed, 0.1f);
 
         ImGui::DragInt("Sub Steps", &subSteps);
         static int spawnCount = 1;                      // Default spawn count
@@ -324,10 +338,9 @@ int main(int argc, char *argv[])
             {
                 // Generate a random position and velocity for the new particle
                 glm::vec3 randomPos = randomVec3(-constraintRadius, constraintRadius);
-                glm::vec3 randomVel = randomVec3(-1.0f, 1.0f);
 
                 // Create the new particle object
-                Obj newParticle = {{randomPos}, {randomVel}, {0.0f, 0.0f, 0.0f}, particleRadius, {0.0f, 0.0f, 0.0f}};
+                Obj newParticle = {{glm::vec3(0)}, {randomPos}, {0.0f, 0.0f, 0.0f}, particleRadius};
 
                 // Add the new particle to the 'objs' vector
                 objs.push_back(newParticle);

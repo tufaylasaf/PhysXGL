@@ -1,13 +1,11 @@
 #version 430 core
 
 struct Particle {
-    vec3 pos;
-    vec3 vel;
-    vec3 acc;
+    vec3 pos;         // Current position
+    vec3 prevPos;     // Previous position (needed for Verlet integration)
+    vec3 acc;         // Current acceleration
 
-    float radius;
-
-    vec3 newAcc;
+    float radius;     // Particle radius
 };
 
 layout(std430, binding = 0) buffer Particles {
@@ -19,6 +17,7 @@ layout (location = 1) in vec3 aNormal;
 layout (location = 2) in vec2 aTex;
 
 out vec3 Normal;
+flat out uint particleID;
 
 uniform mat4 model;
 uniform mat4 camMatrix;
@@ -26,6 +25,7 @@ uniform float scale; // Uniform for scaling
 
 void main() {
     uint id = gl_InstanceID;
+    particleID = id;
     vec3 particlePosition = particles[id].pos;
 
     // Translation matrix to move particle to the origin

@@ -3,106 +3,117 @@
 layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
 
 struct Particle {
-    vec3 pos;
-    vec3 vel;
-    vec3 acc;
+    vec3 pos;         // Current position
+    vec3 prevPos;     // Previous position (needed for Verlet integration)
+    vec3 acc;         // Current acceleration
 
-    float radius;
-
-    vec3 newAcc;
+    float radius;     // Particle radius
 };
 
 layout(std430, binding = 0) buffer Particles {
-    Particle particles[];
+    Particle particles[]; 
 };
 
 uniform float dt;
 uniform float g;
-uniform float cr;
+uniform float cr;  // Constraint radius
 uniform int particleCount;
 uniform int subSteps;
+uniform bool pullToCenter; // Whether to pull particles toward the center
+uniform float maxSpeed;    // Maximum allowed speed
 
-void applyForce(inout Particle p, vec3 f){
-    p.newAcc += f;
-}
+// Limit the particle's speed to maxSpeed
+void limitSpeed(inout Particle p) {
+    vec3 velocity = p.pos - p.prevPos;
+    float speed = length(velocity);
 
-void constraint(inout Particle p, float r){
-    float d = length(p.pos);
-
-    if(d > r){
-        vec3 n = normalize(p.pos);
-        
-        p.pos = n * r;
-        p.vel -= dot(p.vel, n) * n;
+    if (speed > maxSpeed) {
+        p.pos = p.prevPos + normalize(velocity) * maxSpeed; // Adjust position to the max speed
     }
 }
 
-void updateParticle(inout Particle p, float dt, float g){
-    p.newAcc = vec3(0);
-
-    applyForce(p, vec3(0, -g, 0));
-
-    if(length(p.vel) > 0.001){
-        vec3 dir = normalize(p.vel);
-        vec3 friction = -dir * 0.2 * length(p.vel);
-        applyForce(p, friction);
-    }
-
-    vec3 newPos = p.pos + p.vel * dt + p.acc * (dt * dt * 0.5);
-
-    vec3 newVel = p.vel + (p.acc + p.newAcc) * (dt * 0.5);
-
-    p.pos = newPos;
-
-    if(length(newVel) < 0.001) p.vel = vec3(0);
-    else p.vel = newVel;
-
-    p.acc = p.newAcc;
+void applyForce(inout Particle p, vec3 f) {
+    p.acc += f;
 }
 
-void resolveCollisions(inout Particle p1, inout Particle p2){
-    float d = distance(p1.pos, p2.pos);
+void applyContinuousCenterForce(inout Particle p, vec3 containerPos, float cr, float dt) {
+    vec3 toCenter = containerPos - p.pos; // Direction to the center
+    float dist = length(toCenter);       // Distance from the center
 
-    if(d < p1.radius + p2.radius){
+    if (dist > 0.001) { // Avoid division by zero
+        vec3 normalizedForce = normalize(toCenter);
 
-        float overlap = p1.radius + p2.radius - d;
+        // Apply a very strong continuous force toward the center
+        vec3 strongForce = normalizedForce * 15.0; // High force value (adjustable)
 
+        applyForce(p, strongForce);
+    }
+}
 
-        vec3 collisionNormal = normalize(p2.pos - p1.pos);
-        vec3 correction = collisionNormal * (overlap / 2.0);
+void updatePositions(inout Particle p, float dt) {
+    vec3 displacement = p.pos - p.prevPos;          
+    vec3 tempPos = p.pos;                           
 
+    p.pos += displacement + p.acc * (dt * dt);      
+    p.prevPos = tempPos;                            
 
-        p1.pos -= correction;
-        p2.pos += correction;
+    p.acc = vec3(0);  // Reset acceleration after each update
+}
 
+void handleCollision(inout Particle p1, inout Particle p2) {
+    vec3 axis = p1.pos - p2.pos;                    
+    float dist = length(axis);                      
 
-        vec3 relVel = p1.vel - p2.vel;
-        float impulseMag = dot(relVel, collisionNormal);
+    if (dist < p1.radius + p2.radius) {             
+        vec3 norm = axis / dist;                    
+        float overlap = p1.radius + p2.radius - dist;
 
-        float restitution = 0.8;
-        vec3 impulse = collisionNormal * impulseMag * restitution;
+        vec3 correction = norm * (0.5 * overlap);
+        p1.pos += correction;
+        p2.pos -= correction;
+    }
+}
 
+void applyConstraints(inout Particle p, vec3 containerPos, float cr) {
+    vec3 disp = p.pos - containerPos;               
+    float dist = length(disp);                      
 
-        p1.vel -= impulse * 0.5;
-        p2.vel += impulse * 0.5;
+    if (dist > cr - p.radius) {        
+        vec3 norm = disp / dist;                    
+        p.pos = containerPos + norm * (cr - p.radius); 
     }
 }
 
 void main() {
     uint i = gl_GlobalInvocationID.x;
 
+    if (i >= particleCount) return;
+
+    vec3 containerPos = vec3(0.0); // Position of the container (center)
     float subdt = dt / subSteps;
 
-    if(i >= particleCount) return;
-
-    for(int steps = 0; steps < subSteps; steps++){
-        for(int j = 0; j < particleCount; j++){
-            if(j != i){
-                resolveCollisions(particles[i], particles[j]);
-            }
-        }
-
-        updateParticle(particles[i], subdt, g);
-        constraint(particles[i], cr);
+    // Apply either gravity or continuous pull-to-center force
+    if (pullToCenter) {
+        applyContinuousCenterForce(particles[i], containerPos, cr, dt);
+    } else {
+        applyForce(particles[i], vec3(0, -g, 0));  // Gravity force
     }
+
+    // Update positions based on current acceleration
+    updatePositions(particles[i], dt);
+
+    // Limit the speed of the particle
+    limitSpeed(particles[i]);
+
+    // Optional: Handle collisions (uncomment if needed)
+    // for (uint s = 0; s < subSteps; s++) {
+    //     for (uint j = 0; j < particleCount; j++) {
+    //         if (i != j) {
+    //             handleCollision(particles[i], particles[j]);
+    //         }
+    //     }
+    // }
+
+    // Apply boundary constraints
+    applyConstraints(particles[i], containerPos, cr);
 }
