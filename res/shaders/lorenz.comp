@@ -4,22 +4,31 @@ layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
 
 struct Particle {
     vec3 pos;         // Current position
-    vec3 prevPos;     // Previous position (not used here but retained for consistency)
-    vec3 acc;         // Current acceleration (not used here but retained for consistency)
+    vec3 prevPos;     // Previous position
+    vec3 acc;         // Current acceleration (optional)
     float radius;     // Particle radius
 };
 
 layout(std430, binding = 0) buffer Particles {
-    Particle particles[]; 
+    Particle particles[];
 };
 
-// Hardcoded Lorenz parameters
-const float sigma = 10.0;  // Lorenz parameter
-const float rho = 28.0;    // Lorenz parameter
-const float beta = 8.0 / 3.0; // Lorenz parameter
+// Lorenz parameters
+const float sigma = 10.0;
+const float rho = 28.0;
+const float beta = 8.0 / 3.0;
+
+// Thomas parameters
+const float bThomas = 0.208;
+
+// Ikeda parameters
+const float u = 0.9;  // Scaling factor
+const float aIkeda = 0.4;  // Parameter 'a'
+const float bIkeda = 6.0;  // Parameter 'b'
 
 uniform float dt;          // Timestep
 uniform int particleCount; // Number of particles
+uniform int attractorType; // 0 = Lorenz, 1 = Rössler, 2 = Thomas, 3 = Ikeda
 
 // Function to compute the Lorenz attractor step
 void updateLorenz(inout Particle p, float dt) {
@@ -29,10 +38,47 @@ void updateLorenz(inout Particle p, float dt) {
     float dy = pos.x * (rho - pos.z) - pos.y;
     float dz = pos.x * pos.y - beta * pos.z;
 
+    vec3 newPos = pos + vec3(dx, dy, dz) * dt;
+    p.prevPos = pos;
+    p.pos = newPos;
+}
+
+// Function to compute the Thomas attractor step
+void updateThomas(inout Particle p, float dt) {
+    vec3 pos = p.pos;
+
+    // Thomas attractor equations
+    float dx = sin(pos.y) - bThomas * pos.x;
+    float dy = sin(pos.z) - bThomas * pos.y;
+    float dz = sin(pos.x) - bThomas * pos.z;
+
+    // Apply scaling to the output of the attractor equations
+    vec3 delta = vec3(dx, dy, dz) * 10.0;
+
     // Update position using Euler integration
-    p.pos.x += dx * dt;
-    p.pos.y += dy * dt;
-    p.pos.z += dz * dt;
+    vec3 newPos = pos + delta * dt;
+
+    // Update previous position for potential calculations
+    p.prevPos = pos;
+    p.pos = newPos;
+}
+
+// Function to compute the Ikeda attractor step
+void updateIkeda(inout Particle p, float dt) {
+    vec3 pos = p.pos;
+
+    // Calculate polar coordinates for the attractor
+    float r = length(pos.xy);  // Radius in the xy-plane
+    float theta = aIkeda - bIkeda * r;  // Angle based on the distance
+
+    // Ikeda equations in the xy-plane
+    float dx = 1.0 + u * (pos.x * cos(theta) - pos.y * sin(theta));
+    float dy = u * (pos.x * sin(theta) + pos.y * cos(theta));
+
+    // Update positions
+    vec3 newPos = vec3(dx, dy, pos.z); // Keep the z-component unchanged
+    p.prevPos = pos;
+    p.pos = newPos;
 }
 
 void main() {
@@ -40,6 +86,12 @@ void main() {
 
     if (i >= particleCount) return;
 
-    // Update particle position using the Lorenz attractor equations
+    // Use the selected attractor based on the 'attractorType'
+    
     updateLorenz(particles[i], dt);
+
+    // updateThomas(particles[i], dt);
+
+    // updateIkeda(particles[i], dt);
+    
 }

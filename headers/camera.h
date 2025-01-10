@@ -40,7 +40,7 @@ public:
     void updateMatrix(float FOVdeg, float nearPlane, float farPlane);
     void Matrix(Shader &shader, const char *uniform);
 
-    void Inputs(GLFWwindow *window);
+    void Inputs(GLFWwindow *window, float pivotDist);
     void autoRotate(GLFWwindow *window, float centerX, float centerY, float centerZ, float distance, float rotationSpeed);
 };
 #endif

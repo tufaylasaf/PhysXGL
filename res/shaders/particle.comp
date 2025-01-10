@@ -3,32 +3,134 @@
 layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
 
 struct Particle {
-    vec3 pos;         // Current position
-    vec3 prevPos;     // Previous position (needed for Verlet integration)
-    vec3 acc;         // Current acceleration
+    vec3 pos;
+    vec3 prevPos;
+    vec3 acc;
+};
 
-    float radius;     // Particle radius
+struct Hash {
+    float spacing;
+    int maxObjs;
+    int tableSize;
+    int querySize;
 };
 
 layout(std430, binding = 0) buffer Particles {
-    Particle particles[]; 
+    Particle particles[];
+};
+
+layout(std430, binding = 1) buffer CellCountBuffer {
+    int cellCount[];
+};
+
+layout(std430, binding = 2) buffer ParticleMapBuffer {
+    int particleMap[];
+};
+
+layout(std430, binding = 3) buffer QueryIdsBuffer {
+    int queryIds[];
 };
 
 uniform float dt;
 uniform float g;
-uniform float cr;  // Constraint radius
+uniform float cr;
 uniform int particleCount;
 uniform int subSteps;
-uniform bool pullToCenter; // Whether to pull particles toward the center
-uniform float maxSpeed;    // Maximum allowed speed
+uniform bool pullToCenter;
+uniform float maxSpeed;
+uniform float radius;
 
-// Limit the particle's speed to maxSpeed
+uniform Hash hash;
+
+uint hashCoords(int xi, int yi, int zi) {
+    uint h = uint(xi) * 92837111u ^ uint(yi) * 689287499u ^ uint(zi) * 283923481u;
+    return h % uint(hash.tableSize);
+}
+
+int intCoord(float coord) {
+    return int(floor(coord / hash.spacing));
+}
+
+uint hashPos(vec3 pos) {
+    int xi = intCoord(pos.x);
+    int yi = intCoord(pos.y);
+    int zi = intCoord(pos.z);
+
+    return hashCoords(xi, yi, zi);
+}
+
+void createHashTable(inout Particle p, int i) {
+    if (i < hash.tableSize) {
+        cellCount[i] = 0;
+    }
+
+    if (i < particleCount) {
+        uint h = hashPos(p.pos);
+        atomicAdd(cellCount[h], 1);
+    }
+
+    memoryBarrierShared();
+    barrier();
+
+    if (i < hash.tableSize) {
+        int start = 0;
+        for (int j = 0; j < hash.tableSize; j++) {
+            start += cellCount[j];
+            cellCount[j] = start;
+        }
+        cellCount[hash.tableSize] = start;
+    }
+
+    memoryBarrierShared();
+    barrier();
+
+    if (i < particleCount) {
+        uint h = hashPos(p.pos);
+        int cellIndex = atomicAdd(cellCount[h], -1);
+        particleMap[cellIndex - 1] = int(i);
+    }
+}
+
+int queryParticles(inout Particle p, float maxDist) {
+    // memoryBarrier();
+    // barrier();
+
+    int x0 = intCoord(p.pos.x - maxDist);
+    int y0 = intCoord(p.pos.y - maxDist);
+    int z0 = intCoord(p.pos.z - maxDist);
+
+    int x1 = intCoord(p.pos.x + maxDist);
+    int y1 = intCoord(p.pos.y + maxDist);
+    int z1 = intCoord(p.pos.z + maxDist);
+
+    int queryCount = 0;
+
+    for (int xi = x0; xi <= x1; xi++) {
+        for (int yi = y0; yi <= y1; yi++) {
+            for (int zi = z0; zi <= z1; zi++) {
+                uint h = hashCoords(xi, yi, zi);
+                // memoryBarrierBuffer();
+                // barrier();
+
+                int start = cellCount[h];
+                int end = cellCount[h + 1];
+
+                for (int i = start; i < end; i++) {
+                    queryIds[queryCount++] = particleMap[i];
+                }
+            }
+        }
+    }
+
+    return queryCount;
+}
+
 void limitSpeed(inout Particle p) {
     vec3 velocity = p.pos - p.prevPos;
     float speed = length(velocity);
 
     if (speed > maxSpeed) {
-        p.pos = p.prevPos + normalize(velocity) * maxSpeed; // Adjust position to the max speed
+        p.pos = p.prevPos + normalize(velocity) * maxSpeed; 
     }
 }
 
@@ -37,14 +139,14 @@ void applyForce(inout Particle p, vec3 f) {
 }
 
 void applyContinuousCenterForce(inout Particle p, vec3 containerPos, float cr, float dt) {
-    vec3 toCenter = containerPos - p.pos; // Direction to the center
-    float dist = length(toCenter);       // Distance from the center
+    vec3 toCenter = containerPos - p.pos; 
+    float dist = length(toCenter);       
 
-    if (dist > 0.001) { // Avoid division by zero
+    if (dist > 0.001) { 
         vec3 normalizedForce = normalize(toCenter);
 
-        // Apply a very strong continuous force toward the center
-        vec3 strongForce = normalizedForce * 15.0; // High force value (adjustable)
+        
+        vec3 strongForce = normalizedForce * 15.0; 
 
         applyForce(p, strongForce);
     }
@@ -57,16 +159,16 @@ void updatePositions(inout Particle p, float dt) {
     p.pos += displacement + p.acc * (dt * dt);      
     p.prevPos = tempPos;                            
 
-    p.acc = vec3(0);  // Reset acceleration after each update
+    p.acc = vec3(0);  
 }
 
 void handleCollision(inout Particle p1, inout Particle p2) {
     vec3 axis = p1.pos - p2.pos;                    
     float dist = length(axis);                      
 
-    if (dist < p1.radius + p2.radius) {             
+    if (dist < radius + radius) {             
         vec3 norm = axis / dist;                    
-        float overlap = p1.radius + p2.radius - dist;
+        float overlap = radius + radius - dist;
 
         vec3 correction = norm * (0.5 * overlap);
         p1.pos += correction;
@@ -78,42 +180,42 @@ void applyConstraints(inout Particle p, vec3 containerPos, float cr) {
     vec3 disp = p.pos - containerPos;               
     float dist = length(disp);                      
 
-    if (dist > cr - p.radius) {        
+    if (dist > cr - radius) {        
         vec3 norm = disp / dist;                    
-        p.pos = containerPos + norm * (cr - p.radius); 
+        p.pos = containerPos + norm * (cr - radius); 
     }
 }
-
 void main() {
     uint i = gl_GlobalInvocationID.x;
 
+    createHashTable(particles[i], int(i));
+
     if (i >= particleCount) return;
 
-    vec3 containerPos = vec3(0.0); // Position of the container (center)
+    vec3 containerPos = vec3(0.0); 
     float subdt = dt / subSteps;
 
-    // Apply either gravity or continuous pull-to-center force
+    int queryCount = queryParticles(particles[i], 2.0 * radius);
+    
     if (pullToCenter) {
         applyContinuousCenterForce(particles[i], containerPos, cr, dt);
     } else {
-        applyForce(particles[i], vec3(0, -g, 0));  // Gravity force
+        applyForce(particles[i], vec3(0, -g, 0));  
     }
-
-    // Update positions based on current acceleration
+    
     updatePositions(particles[i], dt);
-
-    // Limit the speed of the particle
+    
     limitSpeed(particles[i]);
 
-    // Optional: Handle collisions (uncomment if needed)
-    // for (uint s = 0; s < subSteps; s++) {
-    //     for (uint j = 0; j < particleCount; j++) {
-    //         if (i != j) {
-    //             handleCollision(particles[i], particles[j]);
-    //         }
-    //     }
-    // }
+    for (uint s = 0; s < subSteps; s++) {
+        for (int q = 0; q < queryCount; q++) {
+            int neighborIndex = queryIds[q];
+            if (i != neighborIndex) {
+                handleCollision(particles[i], particles[neighborIndex]);
+            }
+        }
+    }
 
-    // Apply boundary constraints
+    
     applyConstraints(particles[i], containerPos, cr);
 }

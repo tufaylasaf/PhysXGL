@@ -100,8 +100,6 @@ struct Obj
     alignas(16) glm::vec3 pos;
     alignas(16) glm::vec3 prevPos;
     alignas(16) glm::vec3 acc;
-
-    alignas(4) float radius;
 };
 
 int main(int argc, char *argv[])
@@ -130,7 +128,7 @@ int main(int argc, char *argv[])
     glfwSetWindowPos(window, windowPosX, windowPosY);
     glfwMakeContextCurrent(window);
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
-    glfwSwapInterval(0);
+    // glfwSwapInterval(1);
 
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
     {
@@ -139,38 +137,84 @@ int main(int argc, char *argv[])
     }
 
     // Setup compute shader
-    ComputeShader computeShader("res/shaders/lorenz.comp");
+    ComputeShader computeShader("res/shaders/particle.comp");
 
     auto lastTime = std::chrono::high_resolution_clock::now();
+
+    // Settings
     int numPoints = 12;
     float constraintRadius = 3.1f;
     float particleRadius = 0.1f;
     int subSteps = 8;
-    float maxSpeed = 2.0f;
+    float maxSpeed = 3.333f;
+    float pivotDist = 10.f;
 
     // Setup particle data in an SSBO
-    std::vector<Obj> objs = {
-        {{glm::vec3(0.0f)}, {glm::vec3(0.0f)}, {0.0f, 0.0f, 0.0f}, particleRadius} // Particle 1
-    };
+    std::vector<Obj> objs;
 
-    // Add more particles if needed
-    for (int i = 1; i < 20000; ++i)
-    {
-        glm::vec3 randomOffset = randomVec3(-0.01f, 0.01f); // Small random perturbation
-        objs.push_back({{randomOffset}, {glm::vec3(0.0f)}, {0.0f, 0.0f, 0.0f}, particleRadius});
-    }
+    // Spatial Hashing Settings
+    float hashSpacing = particleRadius * 2.0f;
+    int hashTableSize = 5 * objs.size();
+
+    // // Add more particles if needed
+    // for (int i = 0; i < 10000; ++i)
+    // {
+    //     glm::vec3 randomOffset = randomVec3(-0.01f, 0.01f); // Small random perturbation
+    //     objs.push_back({{randomOffset}, {glm::vec3(0.0f)}, {0.0f, 0.0f, 0.0f}, particleRadius});
+    // }
 
     GLuint ssbo;
     glGenBuffers(1, &ssbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(Obj) * objs.size(), objs.data(), GL_DYNAMIC_DRAW);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    // Cell Count Buffer
+    GLuint cellCountBuffer;
+    glGenBuffers(1, &cellCountBuffer);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, cellCountBuffer);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, cellCountBuffer); // Binding = 1
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    // Particle Map Buffer
+    GLuint particleMapBuffer;
+    glGenBuffers(1, &particleMapBuffer);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleMapBuffer);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, particleMapBuffer); // Binding = 2
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    // Query IDs Buffer
+    GLuint queryIdsBuffer;
+    glGenBuffers(1, &queryIdsBuffer);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, queryIdsBuffer);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, queryIdsBuffer); // Binding = 3
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    // FirstAdjacency Buffer
+    GLuint firstAdjIdsBuffer;
+    glGenBuffers(1, &firstAdjIdsBuffer);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, firstAdjIdsBuffer);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, firstAdjIdsBuffer); // Binding = 4
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    // Adjacency Buffer
+    GLuint adjIdsBuffer;
+    glGenBuffers(1, &adjIdsBuffer);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, adjIdsBuffer);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, adjIdsBuffer); // Binding = 5
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
     // Setup shaders
     Shader shader("res/shaders/particle.vert", "res/shaders/particle.frag");
     Shader icoboundsShader("res/shaders/icobounds.vert", "res/shaders/icobounds.frag");
     Camera camera(width, height, glm::vec3(0.0f, 0.0f, 10.0f));
+    // camera.Orientation = glm::vec3(-0.083f, -0.088f, 0.993f);
 
     glm::vec3 sunDirection(1.0f, 1.0f, 1.0f);
     glm::vec3 color(1.0f, 1.0f, 1.0f);
@@ -246,13 +290,14 @@ int main(int argc, char *argv[])
         GLuint workgroupSize = 128; // This can be adjusted based on the GPU's capabilities
 
         // Calculate number of workgroups needed
-        GLuint numWorkgroups = (objs.size() + workgroupSize - 1) / workgroupSize; // Ceil(particleCount / workgroupSize)
+        GLuint numWorkgroups = (std::max(int(objs.size()), hashTableSize) + workgroupSize - 1) / workgroupSize; // Ceil(particleCount / workgroupSize)
 
         // Compute shader
         computeShader.use();
         computeShader.setFloat("dt", dt);
         computeShader.setFloat("g", 9.81f);
         computeShader.setFloat("cr", constraintRadius + 0.25f);
+        computeShader.setFloat("radius", particleRadius);
         computeShader.setInt("particleCount", objs.size());
         computeShader.setInt("subSteps", subSteps);
         bool spacePressed = false;
@@ -261,28 +306,32 @@ int main(int argc, char *argv[])
 
         computeShader.setBool("pullToCenter", spacePressed);
         computeShader.setFloat("maxSpeed", maxSpeed);
+        computeShader.setFloat("hash.spacing", hashSpacing);
+        computeShader.setInt("hash.maxObjs", objs.size());
+        computeShader.setInt("hash.tableSize", hashTableSize);
+        // computeShader.setVec3("offset", lorenzOffset);
 
         glDispatchCompute(numWorkgroups, 1, 1);
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
-        camera.Inputs(window);
+        camera.Inputs(window, pivotDist);
         camera.updateMatrix(45.0f, 0.1f, 100.0f);
 
         // Render the cube
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // icoboundsShader.Activate();
-        // glm::mat4 m = glm::mat4(1.0f);                      // Identity matrix
-        // m = glm::translate(m, glm::vec3(0.0f, 0.0f, 0.0f)); // Translate to center
-        // glUniformMatrix4fv(glGetUniformLocation(icoboundsShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(m));
-        // glUniformMatrix4fv(glGetUniformLocation(icoboundsShader.ID, "camMatrix"), 1, GL_FALSE, glm::value_ptr(camera.cameraMatrix));
+        icoboundsShader.Activate();
+        glm::mat4 m = glm::mat4(1.0f);                      // Identity matrix
+        m = glm::translate(m, glm::vec3(0.0f, 0.0f, 0.0f)); // Translate to center
+        glUniformMatrix4fv(glGetUniformLocation(icoboundsShader.ID, "model"), 1, GL_FALSE, glm::value_ptr(m));
+        glUniformMatrix4fv(glGetUniformLocation(icoboundsShader.ID, "camMatrix"), 1, GL_FALSE, glm::value_ptr(camera.cameraMatrix));
 
-        // glPolygonMode(GL_FRONT_AND_BACK, GL_POINT); // Draw points
-        // glBindVertexArray(VAO);
-        // glDrawArrays(GL_POINTS, 0, spherePoints.size()); // Draw points around the center
-        // glBindVertexArray(0);
+        glPolygonMode(GL_FRONT_AND_BACK, GL_POINT); // Draw points
+        glBindVertexArray(VAO);
+        glDrawArrays(GL_POINTS, 0, spherePoints.size()); // Draw points around the center
+        glBindVertexArray(0);
 
-        // glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
         shader.Activate();
         glm::mat4 model = glm::mat4(1.0);
@@ -311,7 +360,8 @@ int main(int argc, char *argv[])
         ImGui::TextColored(ImVec4(128.0f, 0.0f, 128.0f, 255.0f), "Stats & Settings");
         ImGui::Text("FPS: %.1f", io.Framerate);
         ImGui::Text("Frame time: %.3f ms", 1000.0f / io.Framerate);
-        ImGui::DragFloat3("Camera Pos", &camera.Position[0], 0.1f);
+        // ImGui::DragFloat3("Camera Pos", &camera.Position[0], 0.1f);
+        // ImGui::DragFloat3("Camera Orientation", &camera.Orientation[0], 0.1f);
         ImGui::Spacing();
 
         ImGui::TextColored(ImVec4(0.0f, 128.0f, 0.0f, 255.0f), "Particle Count: %i", objs.size());
@@ -322,8 +372,12 @@ int main(int argc, char *argv[])
         ImGui::DragFloat3("Sun Direction", &sunDirection[0], 0.1f);
         ImGui::ColorEdit3("Particle Color", &color[0], 0.1f);
         ImGui::ColorEdit3("Ambient Lighting", &ambient[0], 0.1f);
-        ImGui::DragFloat("Particle Radius", &particleRadius, 0.1f);
-        ImGui::DragFloat("Max Speed", &maxSpeed, 0.1f);
+        // ImGui::DragFloat("Particle Radius", &particleRadius, 0.1f);
+        // ImGui::DragFloat("Max Speed", &maxSpeed, 0.001f);
+        // ImGui::DragFloat("Pivot Dist", &pivotDist, 0.1f);
+
+        ImGui::TextColored(ImVec4(0.0f, 128.0f, 128.0f, 255.0f), "Spatial Hashing Settings");
+        ImGui::DragFloat("Spacing", &hashSpacing);
 
         ImGui::DragInt("Sub Steps", &subSteps);
         static int spawnCount = 1;                      // Default spawn count
@@ -340,15 +394,42 @@ int main(int argc, char *argv[])
                 glm::vec3 randomPos = randomVec3(-constraintRadius, constraintRadius);
 
                 // Create the new particle object
-                Obj newParticle = {{glm::vec3(0)}, {randomPos}, {0.0f, 0.0f, 0.0f}, particleRadius};
+                Obj newParticle = {{glm::vec3(0)}, {randomPos}, {0.0f, 0.0f, 0.0f}};
 
                 // Add the new particle to the 'objs' vector
                 objs.push_back(newParticle);
+
+                hashTableSize = 5 * objs.size();
 
                 // Resize the SSBO to accommodate the new particle
                 glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
                 glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(Obj) * objs.size(), objs.data(), GL_DYNAMIC_DRAW);
                 glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo);
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, cellCountBuffer);
+                glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(int) * hashTableSize + 1, nullptr, GL_DYNAMIC_DRAW);
+                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, cellCountBuffer);
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleMapBuffer);
+                glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(int) * objs.size(), nullptr, GL_DYNAMIC_DRAW);
+                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, particleMapBuffer);
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, queryIdsBuffer);
+                glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(int) * objs.size(), nullptr, GL_DYNAMIC_DRAW);
+                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, queryIdsBuffer);
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, firstAdjIdsBuffer);
+                glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(int) * objs.size() + 1, nullptr, GL_DYNAMIC_DRAW);
+                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, firstAdjIdsBuffer);
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, adjIdsBuffer);
+                glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(int) * objs.size() * 10, nullptr, GL_DYNAMIC_DRAW);
+                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, adjIdsBuffer);
                 glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
             }
         }
