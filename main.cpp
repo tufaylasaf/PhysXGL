@@ -8,6 +8,7 @@
 
 #include "light.h"
 #include "physx.h"
+#include "hash.h"
 
 const unsigned int width = 1600;
 const unsigned int height = 900;
@@ -190,7 +191,12 @@ int main()
     float constraintRadius = 3.1f;
     float particleRadius = 0.1f;
 
+    Hash hash(2 * particleRadius, 1200);
+
     Particle p(particleRadius, constraintRadius);
+    Particle p1(particleRadius, constraintRadius);
+    Particle p2(particleRadius, constraintRadius);
+    Particle p3(particleRadius, constraintRadius);
 
     std::vector<glm::vec3> spherePoints = generateCubeSpherePoints(numPoints, constraintRadius);
 
@@ -234,7 +240,7 @@ int main()
         camera.Inputs(window);
         camera.updateMatrix(45.0f, 0.1f, 100.0f);
 
-        physx.update(particleRadius, dt, 9.81, constraintRadius);
+        physx.update(particleRadius, dt, 9.81, constraintRadius, 8, &hash);
 
         shader.Activate();
 
@@ -294,6 +300,9 @@ int main()
             for (int i = 0; i < spawnCount; i++)
             {
                 new Particle(particleRadius, constraintRadius); // Spawn particles
+
+                // hash.~Hash(); // Explicitly call the destructor
+                // new (&hash) Hash(2 * particleRadius, Particle::particles.size());
             }
         }
         ImGui::End();

@@ -39,6 +39,8 @@ public:
 
     void applyForce(glm::vec3 f);
 
+    static std::vector<glm::vec3> getPos();
+
 private:
     glm::vec3 newAcc;
 

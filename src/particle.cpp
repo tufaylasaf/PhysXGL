@@ -52,3 +52,16 @@ void Particle::constraint(float r)
         vel -= glm::dot(vel, normal) * normal;
     }
 }
+
+std::vector<glm::vec3> Particle::getPos()
+{
+    std::vector<glm::vec3> positions;
+    positions.reserve(Particle::particles.size());
+
+    for (const Particle *particle : Particle::particles)
+    {
+        positions.push_back(particle->pos);
+    }
+
+    return positions;
+}
