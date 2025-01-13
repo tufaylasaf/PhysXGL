@@ -4,6 +4,7 @@ struct Particle {
     vec3 pos;
     vec3 vel;
     vec3 acc;
+    vec3 newAcc;
 };
 
 layout(std430, binding = 0) buffer Particles {

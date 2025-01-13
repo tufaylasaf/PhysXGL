@@ -98,8 +98,9 @@ std::vector<Particle *> Particle::particles;
 struct Obj
 {
     alignas(16) glm::vec3 pos;
-    alignas(16) glm::vec3 prevPos;
+    alignas(16) glm::vec3 vel;
     alignas(16) glm::vec3 acc;
+    alignas(16) glm::vec3 newAcc;
 };
 
 int main(int argc, char *argv[])
@@ -154,7 +155,8 @@ int main(int argc, char *argv[])
 
     // Spatial Hashing Settings
     float hashSpacing = particleRadius * 2.0f;
-    int hashTableSize = 5 * objs.size();
+    int maxNumObjs = 512;
+    int hashTableSize = 2 * maxNumObjs;
 
     // // Add more particles if needed
     // for (int i = 0; i < 10000; ++i)
@@ -174,7 +176,7 @@ int main(int argc, char *argv[])
     GLuint cellCountBuffer;
     glGenBuffers(1, &cellCountBuffer);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, cellCountBuffer);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(int) * hashTableSize + 1, nullptr, GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, cellCountBuffer); // Binding = 1
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
@@ -182,7 +184,7 @@ int main(int argc, char *argv[])
     GLuint particleMapBuffer;
     glGenBuffers(1, &particleMapBuffer);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleMapBuffer);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(int) * maxNumObjs, nullptr, GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, particleMapBuffer); // Binding = 2
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
@@ -190,24 +192,8 @@ int main(int argc, char *argv[])
     GLuint queryIdsBuffer;
     glGenBuffers(1, &queryIdsBuffer);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, queryIdsBuffer);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(int) * maxNumObjs, nullptr, GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, queryIdsBuffer); // Binding = 3
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-
-    // FirstAdjacency Buffer
-    GLuint firstAdjIdsBuffer;
-    glGenBuffers(1, &firstAdjIdsBuffer);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, firstAdjIdsBuffer);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, firstAdjIdsBuffer); // Binding = 4
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-
-    // Adjacency Buffer
-    GLuint adjIdsBuffer;
-    glGenBuffers(1, &adjIdsBuffer);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, adjIdsBuffer);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, adjIdsBuffer); // Binding = 5
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
     // Setup shaders
@@ -290,7 +276,7 @@ int main(int argc, char *argv[])
         GLuint workgroupSize = 128; // This can be adjusted based on the GPU's capabilities
 
         // Calculate number of workgroups needed
-        GLuint numWorkgroups = (std::max(int(objs.size()), hashTableSize) + workgroupSize - 1) / workgroupSize; // Ceil(particleCount / workgroupSize)
+        GLuint numWorkgroups = (objs.size() + workgroupSize - 1) / workgroupSize; // Ceil(particleCount / workgroupSize)
 
         // Compute shader
         computeShader.use();
@@ -307,7 +293,7 @@ int main(int argc, char *argv[])
         computeShader.setBool("pullToCenter", spacePressed);
         computeShader.setFloat("maxSpeed", maxSpeed);
         computeShader.setFloat("hash.spacing", hashSpacing);
-        computeShader.setInt("hash.maxObjs", objs.size());
+        computeShader.setInt("hash.maxObjs", maxNumObjs);
         computeShader.setInt("hash.tableSize", hashTableSize);
         // computeShader.setVec3("offset", lorenzOffset);
 
@@ -394,7 +380,7 @@ int main(int argc, char *argv[])
                 glm::vec3 randomPos = randomVec3(-constraintRadius, constraintRadius);
 
                 // Create the new particle object
-                Obj newParticle = {{glm::vec3(0)}, {randomPos}, {0.0f, 0.0f, 0.0f}};
+                Obj newParticle = {{randomPos}, {glm::vec3(0)}, {glm::vec3(0)}, {glm::vec3(0)}};
 
                 // Add the new particle to the 'objs' vector
                 objs.push_back(newParticle);
@@ -405,31 +391,6 @@ int main(int argc, char *argv[])
                 glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
                 glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(Obj) * objs.size(), objs.data(), GL_DYNAMIC_DRAW);
                 glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo);
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, cellCountBuffer);
-                glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(int) * hashTableSize + 1, nullptr, GL_DYNAMIC_DRAW);
-                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, cellCountBuffer);
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleMapBuffer);
-                glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(int) * objs.size(), nullptr, GL_DYNAMIC_DRAW);
-                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, particleMapBuffer);
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, queryIdsBuffer);
-                glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(int) * objs.size(), nullptr, GL_DYNAMIC_DRAW);
-                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, queryIdsBuffer);
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, firstAdjIdsBuffer);
-                glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(int) * objs.size() + 1, nullptr, GL_DYNAMIC_DRAW);
-                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, firstAdjIdsBuffer);
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, adjIdsBuffer);
-                glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(int) * objs.size() * 10, nullptr, GL_DYNAMIC_DRAW);
-                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, adjIdsBuffer);
                 glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
             }
         }
